@@ -1,5 +1,6 @@
 /**
  * Detects pitch using autocorrelation with voice-focused improvements
+ * Uses peak-picking strategy to avoid octave errors (detecting half-frequency)
  */
 export function detectPitch(
   buffer: Float32Array,
@@ -28,12 +29,10 @@ export function detectPitch(
     clipped[i] = Math.abs(v) > clipThreshold ? v : 0;
   }
 
-  // 3. Normalized autocorrelation (NSDF-style)
+  // 3. Compute normalized autocorrelation for all offsets
   const minPeriod = Math.floor(sampleRate / maxFrequency);
   const maxPeriod = Math.ceil(sampleRate / minFrequency);
-
-  let bestOffset = -1;
-  let bestNormalizedCorr = 0;
+  const corrValues: number[] = [];
 
   for (
     let offset = minPeriod;
@@ -52,33 +51,58 @@ export function detectPitch(
 
     // Normalized correlation (prevents bias toward longer offsets)
     const normalizedCorr = correlation / Math.sqrt(energy1 * energy2 + 1e-10);
+    corrValues.push(normalizedCorr);
+  }
 
-    if (normalizedCorr > bestNormalizedCorr) {
-      bestNormalizedCorr = normalizedCorr;
-      bestOffset = offset;
+  // 4. Find all local maxima (peaks) in the correlation
+  const peaks: { offset: number; value: number }[] = [];
+  for (let i = 1; i < corrValues.length - 1; i++) {
+    if (
+      corrValues[i] > corrValues[i - 1] &&
+      corrValues[i] > corrValues[i + 1]
+    ) {
+      peaks.push({ offset: minPeriod + i, value: corrValues[i] });
     }
   }
 
-  // 4. Require strong correlation for voice (periodic signal)
-  if (bestOffset === -1 || bestNormalizedCorr < correlationThreshold) {
+  if (peaks.length === 0) return null;
+
+  // 5. Pick the FIRST peak that exceeds threshold (favors higher frequency)
+  //    This prevents octave errors where we detect half the frequency
+  const globalMax = Math.max(...peaks.map((p) => p.value));
+  const pickThreshold = globalMax * 0.85; // Accept peaks within 85% of max
+
+  let bestPeak = peaks[0];
+  for (const peak of peaks) {
+    if (peak.value >= pickThreshold) {
+      bestPeak = peak;
+      break; // Take the first (smallest period = highest frequency) good peak
+    }
+  }
+
+  // 6. Require strong correlation for voice (periodic signal)
+  if (bestPeak.value < correlationThreshold) {
     return null; // Not periodic enough to be voice
   }
 
-  // 5. Parabolic interpolation for sub-sample accuracy
-  if (bestOffset > minPeriod && bestOffset < maxPeriod - 1) {
-    // Recalculate neighbors for interpolation
-    const getCorr = (off: number) => {
-      let c = 0;
-      for (let i = 0; i < clipped.length - off; i++) {
-        c += clipped[i] * clipped[i + off];
+  let bestOffset = bestPeak.offset;
+
+  // 7. Parabolic interpolation for sub-sample accuracy
+  if (
+    bestOffset > minPeriod &&
+    bestOffset < minPeriod + corrValues.length - 1
+  ) {
+    const idx = bestOffset - minPeriod;
+    if (idx > 0 && idx < corrValues.length - 1) {
+      const y0 = corrValues[idx - 1];
+      const y1 = corrValues[idx];
+      const y2 = corrValues[idx + 1];
+      const denom = y0 - 2 * y1 + y2;
+      if (Math.abs(denom) > 1e-10) {
+        const delta = (y0 - y2) / (2 * denom);
+        bestOffset += delta;
       }
-      return c;
-    };
-    const y0 = getCorr(bestOffset - 1);
-    const y1 = getCorr(bestOffset);
-    const y2 = getCorr(bestOffset + 1);
-    const delta = (y0 - y2) / (2 * (y0 - 2 * y1 + y2));
-    bestOffset += delta;
+    }
   }
 
   return sampleRate / bestOffset;
