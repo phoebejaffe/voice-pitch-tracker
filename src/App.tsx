@@ -50,16 +50,16 @@ function PitchIndicator({ frequency }: { frequency: number | null }) {
 
   // Handle pitch changes and fade logic
   useEffect(() => {
-    if (frequency !== null) {
-      // Pitch detected - update position, show immediately
-      setLastY(freqToY(Math.min(Math.max(frequency, FREQ_MIN), FREQ_MAX)));
+    if (frequency !== null && frequency >= FREQ_MIN && frequency <= FREQ_MAX) {
+      // Pitch detected and within range - update position, show immediately
+      setLastY(freqToY(frequency));
       setOpacity(1);
       if (fadeTimeoutRef.current) {
         clearTimeout(fadeTimeoutRef.current);
         fadeTimeoutRef.current = null;
       }
     } else if (lastY !== null && opacity === 1) {
-      // Pitch lost - wait 0.3s then start fade
+      // Pitch lost or out of range - wait 0.3s then start fade
       fadeTimeoutRef.current = window.setTimeout(() => {
         setOpacity(0);
       }, 300);
