@@ -30,7 +30,7 @@ function lerpColor(color1: string, color2: string, t: number): string {
 
 // Frequency range for the visual indicator
 const FREQ_MIN = 100;
-const FREQ_MAX = 200;
+const FREQ_MAX = 400;
 
 function PitchIndicator({ frequency }: { frequency: number | null }) {
   const height = 400;
@@ -40,9 +40,11 @@ function PitchIndicator({ frequency }: { frequency: number | null }) {
   const [opacity, setOpacity] = useState(1);
   const fadeTimeoutRef = useRef<number | null>(null);
 
-  // Calculate position for a given frequency (inverted: low freq at bottom)
+  // Calculate position for a given frequency (logarithmic scale, low freq at bottom)
   const freqToY = (freq: number) => {
-    const normalized = (freq - FREQ_MIN) / (FREQ_MAX - FREQ_MIN);
+    const logMin = Math.log(FREQ_MIN);
+    const logMax = Math.log(FREQ_MAX);
+    const normalized = (Math.log(freq) - logMin) / (logMax - logMin);
     return height - normalized * height;
   };
 
