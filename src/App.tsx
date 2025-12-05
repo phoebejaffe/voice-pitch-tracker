@@ -11,7 +11,7 @@ const COLOR_THRESHOLDS = [
   { maxFreq: 130, color: "#990000", label: "< 130 Hz: Red" },
   { maxFreq: 145, color: "#994400", label: "130-145 Hz: Orange" },
   { maxFreq: 165, color: "#334433", label: "145-165 Hz: Dark Green" },
-  { maxFreq: Infinity, color: "#446644", label: "165+ Hz: Green" },
+  { maxFreq: Infinity, color: "#446644", label: "> 165 Hz: Green" },
   { maxFreq: null, color: "#000000", label: "No pitch detected" },
 ];
 
@@ -377,18 +377,6 @@ function App() {
     };
   }, []);
 
-  // Spacebar listener for playing tone
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "Space" && e.target === document.body) {
-        e.preventDefault();
-        playTone();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toneFrequency]);
-
   // Keep the last color when frequency is null (don't transition through black)
   if (frequency !== null) {
     lastColorRef.current = getBackgroundColor(frequency);
@@ -414,7 +402,7 @@ function App() {
     >
       <div style={{ textAlign: "center" }}>
         <h1 style={{ fontSize: "3rem", marginBottom: "2rem" }}>
-          Voice Floor Tracker
+          Voice Pitch Tracker
         </h1>
 
         {error && (
@@ -467,13 +455,63 @@ function App() {
 
         <div
           style={{
-            marginBottom: "2rem",
+            display: "flex",
+            gap: "2rem",
+            alignItems: "center",
+            width: "300px",
+            marginLeft: "auto",
+            marginRight: "auto",
+          }}
+        >
+          <PitchIndicator frequency={frequency} />
+          <div>
+            <div
+              style={{
+                fontSize: "2rem",
+                marginBottom: "1rem",
+                textAlign: "left",
+              }}
+            >
+              {frequency !== null ? (
+                <>
+                  <strong>{Math.round(frequency)} Hz</strong>
+                </>
+              ) : (
+                <span style={{ opacity: 0.5 }}>
+                  {isListening ? "Listening" : "Not Listening"}
+                </span>
+              )}
+            </div>
+
+            <div style={{ fontSize: "1rem", opacity: 0.7, textAlign: "left" }}>
+              {COLOR_THRESHOLDS.map((threshold, index) => (
+                <p key={index} style={{ margin: "0.25rem 0" }}>
+                  {threshold.label}
+                </p>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            marginTop: "2rem",
             padding: "1rem",
             backgroundColor: "rgba(0,0,0,0.3)",
             borderRadius: "8px",
+            width: "300px",
+            marginLeft: "auto",
+            marginRight: "auto",
           }}
         >
-          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+          <div
+            style={{
+              display: "flex",
+              gap: "0.5rem",
+              marginBottom: "1rem",
+              justifyContent: "center",
+            }}
+          >
             <button
               onClick={playTone}
               style={{
@@ -486,7 +524,7 @@ function App() {
                 cursor: "pointer",
               }}
             >
-              Tone (Space)
+              Tone
             </button>
             <button
               onClick={isDronePlaying ? stopDrone : startDrone}
@@ -508,7 +546,7 @@ function App() {
             <input
               id="toneFreq"
               type="range"
-              min={165}
+              min={155}
               max={205}
               step={10}
               value={toneFrequency}
@@ -517,33 +555,6 @@ function App() {
             />
           </div>
         </div>
-
-        {isListening && (
-          <div style={{ display: "flex", gap: "2rem", alignItems: "center" }}>
-            <PitchIndicator frequency={frequency} />
-            <div>
-              <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>
-                {frequency !== null ? (
-                  <>
-                    <strong>{Math.round(frequency)} Hz</strong>
-                  </>
-                ) : (
-                  <span style={{ opacity: 0.5 }}>Listening...</span>
-                )}
-              </div>
-
-              <div
-                style={{ fontSize: "1rem", opacity: 0.7, textAlign: "left" }}
-              >
-                {COLOR_THRESHOLDS.map((threshold, index) => (
-                  <p key={index} style={{ margin: "0.25rem 0" }}>
-                    {threshold.label}
-                  </p>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
