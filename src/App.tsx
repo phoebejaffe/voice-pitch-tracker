@@ -285,8 +285,8 @@ function App() {
       const source = audioContext.createMediaStreamSource(stream);
       const analyser = audioContext.createAnalyser();
 
-      analyser.fftSize = 4096;
-      analyser.smoothingTimeConstant = 0.8;
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.3;
 
       source.connect(analyser);
 
@@ -336,8 +336,8 @@ function App() {
         frequencyHistoryRef.current.push(now);
       }
 
-      // Only show frequency if we have 10+ detections in the last time period
-      const hasEnoughDetections = frequencyHistoryRef.current.length >= 4;
+      // Only show frequency if we have enough detections in the last time period
+      const hasEnoughDetections = frequencyHistoryRef.current.length >= 2;
       setFrequency(hasEnoughDetections ? detectedFreq : null);
 
       animationFrameRef.current = requestAnimationFrame(analyze);
