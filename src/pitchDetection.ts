@@ -5,18 +5,24 @@ export function detectPitch(
   buffer: Float32Array,
   sampleRate: number,
   minFrequency: number = 80, // Voice typically 80Hz+
-  maxFrequency: number = 400 // Upper limit for fundamental (not harmonics)
+  maxFrequency: number = 400, // Upper limit for fundamental (not harmonics)
+  isMobile: boolean = false // Mobile devices get increased sensitivity
 ): number | null {
+  // Sensitivity thresholds - mobile gets more sensitive settings
+  const rmsThreshold = isMobile ? 0.004 : 0.01;
+  const clipPercent = isMobile ? 0.3 : 0.5;
+  const correlationThreshold = isMobile ? 0.6 : 0.7;
+
   // 1. RMS amplitude check
   const rms = Math.sqrt(
     buffer.reduce((sum, val) => sum + val * val, 0) / buffer.length
   );
-  if (rms < 0.01) return null;
+  if (rms < rmsThreshold) return null;
 
   // 2. Apply simple center-clipping to emphasize periodicity
   //    This helps reject noise and aperiodic sounds
   const clipped = new Float32Array(buffer.length);
-  const clipThreshold = rms * 0.5; // Clip below 50% of RMS
+  const clipThreshold = rms * clipPercent;
   for (let i = 0; i < buffer.length; i++) {
     const v = buffer[i];
     clipped[i] = Math.abs(v) > clipThreshold ? v : 0;
@@ -54,7 +60,7 @@ export function detectPitch(
   }
 
   // 4. Require strong correlation for voice (periodic signal)
-  if (bestOffset === -1 || bestNormalizedCorr < 0.7) {
+  if (bestOffset === -1 || bestNormalizedCorr < correlationThreshold) {
     return null; // Not periodic enough to be voice
   }
 

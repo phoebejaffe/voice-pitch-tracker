@@ -1,11 +1,17 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { detectPitch } from "./pitchDetection";
+
+// Simple mobile detection
+const isMobileDevice = () =>
+  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent
+  ) || window.innerWidth < 768;
 
 const COLOR_THRESHOLDS = [
   { maxFreq: 130, color: "#990000", label: "< 130 Hz: Red" },
   { maxFreq: 145, color: "#994400", label: "130-145 Hz: Orange" },
-  { maxFreq: 165, color: "#334433", label: "145-165 Hz: Grey" },
-  { maxFreq: Infinity, color: "#446644", label: "165+ Hz: Grey-Green" },
+  { maxFreq: 165, color: "#334433", label: "145-165 Hz: Dark Green" },
+  { maxFreq: Infinity, color: "#446644", label: "165+ Hz: Green" },
   { maxFreq: null, color: "#000000", label: "No pitch detected" },
 ];
 
@@ -178,6 +184,7 @@ function App() {
   const droneOscillatorRef = useRef<OscillatorNode | null>(null);
   const droneGainRef = useRef<GainNode | null>(null);
   const lastColorRef = useRef<string>("#000000");
+  const isMobile = useMemo(() => isMobileDevice(), []);
 
   const stopDrone = () => {
     if (droneOscillatorRef.current) {
@@ -321,8 +328,8 @@ function App() {
 
       const sampleRate = audioContextRef.current.sampleRate;
       const detectedFreq =
-        detectPitch(buffer, sampleRate, 105, 400) ??
-        detectPitch(buffer, sampleRate, 105, 800);
+        detectPitch(buffer, sampleRate, 105, 400, isMobile) ??
+        detectPitch(buffer, sampleRate, 105, 800, isMobile);
 
       // Track frequency detections with timestamps
       const now = Date.now();
