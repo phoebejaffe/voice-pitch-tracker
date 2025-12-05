@@ -1,6 +1,6 @@
 # Voice Floor Tracker
 
-A React + TypeScript web application that listens to your microphone and detects the fundamental frequency of sound, changing the background color based on pitch thresholds.
+A React + TypeScript web application that listens to your microphone and detects the fundamental frequency of sound, changing the background color based on pitch thresholds!
 
 ## Features
 
@@ -39,4 +39,3 @@ npm run build
 - Real-time audio analysis at ~60fps
 - Filters sounds below amplitude threshold (0.01 RMS)
 - Detects frequencies between 50-500 Hz
-
