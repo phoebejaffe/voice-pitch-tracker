@@ -175,6 +175,7 @@ function App() {
   const [isDronePlaying, setIsDronePlaying] = useState(false);
   const droneOscillatorRef = useRef<OscillatorNode | null>(null);
   const droneGainRef = useRef<GainNode | null>(null);
+  const lastColorRef = useRef<string>("#000000");
 
   const stopDrone = () => {
     if (droneOscillatorRef.current) {
@@ -379,7 +380,11 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [toneFrequency]);
 
-  const backgroundColor = getBackgroundColor(frequency);
+  // Keep the last color when frequency is null (don't transition through black)
+  if (frequency !== null) {
+    lastColorRef.current = getBackgroundColor(frequency);
+  }
+  const backgroundColor = lastColorRef.current;
 
   return (
     <div
