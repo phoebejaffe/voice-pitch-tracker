@@ -518,7 +518,7 @@ function App() {
               <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>
                 {frequency !== null ? (
                   <>
-                    <strong>{frequency.toFixed(1)} Hz</strong>
+                    <strong>{Math.round(frequency)} Hz</strong>
                   </>
                 ) : (
                   <span style={{ opacity: 0.5 }}>Listening...</span>
