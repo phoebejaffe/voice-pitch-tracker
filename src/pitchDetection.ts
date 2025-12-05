@@ -1,55 +1,79 @@
 /**
- * Detects pitch using autocorrelation algorithm
- * Returns frequency in Hz or null if no clear pitch detected
+ * Detects pitch using autocorrelation with voice-focused improvements
  */
 export function detectPitch(
   buffer: Float32Array,
   sampleRate: number,
-  minFrequency: number = 50,
-  maxFrequency: number = 500
+  minFrequency: number = 80, // Voice typically 80Hz+
+  maxFrequency: number = 400 // Upper limit for fundamental (not harmonics)
 ): number | null {
-  // Calculate amplitude threshold
-  const rms = Math.sqrt(buffer.reduce((sum, val) => sum + val * val, 0) / buffer.length);
-  const amplitudeThreshold = 0.01; // Minimum RMS amplitude to consider
-  
-  if (rms < amplitudeThreshold) {
-    return null; // Sound too quiet
+  // 1. RMS amplitude check
+  const rms = Math.sqrt(
+    buffer.reduce((sum, val) => sum + val * val, 0) / buffer.length
+  );
+  if (rms < 0.01) return null;
+
+  // 2. Apply simple center-clipping to emphasize periodicity
+  //    This helps reject noise and aperiodic sounds
+  const clipped = new Float32Array(buffer.length);
+  const clipThreshold = rms * 0.5; // Clip below 50% of RMS
+  for (let i = 0; i < buffer.length; i++) {
+    const v = buffer[i];
+    clipped[i] = Math.abs(v) > clipThreshold ? v : 0;
   }
 
-  // Autocorrelation
+  // 3. Normalized autocorrelation (NSDF-style)
   const minPeriod = Math.floor(sampleRate / maxFrequency);
   const maxPeriod = Math.ceil(sampleRate / minFrequency);
-  
+
   let bestOffset = -1;
-  let bestCorrelation = 0;
-  
-  for (let offset = minPeriod; offset < maxPeriod && offset < buffer.length; offset++) {
+  let bestNormalizedCorr = 0;
+
+  for (
+    let offset = minPeriod;
+    offset < maxPeriod && offset < clipped.length / 2;
+    offset++
+  ) {
     let correlation = 0;
-    for (let i = 0; i < buffer.length - offset; i++) {
-      correlation += buffer[i] * buffer[i + offset];
+    let energy1 = 0;
+    let energy2 = 0;
+
+    for (let i = 0; i < clipped.length - offset; i++) {
+      correlation += clipped[i] * clipped[i + offset];
+      energy1 += clipped[i] * clipped[i];
+      energy2 += clipped[i + offset] * clipped[i + offset];
     }
-    
-    if (correlation > bestCorrelation) {
-      bestCorrelation = correlation;
+
+    // Normalized correlation (prevents bias toward longer offsets)
+    const normalizedCorr = correlation / Math.sqrt(energy1 * energy2 + 1e-10);
+
+    if (normalizedCorr > bestNormalizedCorr) {
+      bestNormalizedCorr = normalizedCorr;
       bestOffset = offset;
     }
   }
-  
-  // Check if we found a strong enough correlation
-  const correlationThreshold = 0.5;
-  let selfCorrelation = 0;
-  for (let i = 0; i < buffer.length; i++) {
-    selfCorrelation += buffer[i] * buffer[i];
+
+  // 4. Require strong correlation for voice (periodic signal)
+  if (bestOffset === -1 || bestNormalizedCorr < 0.7) {
+    return null; // Not periodic enough to be voice
   }
-  
-  if (bestOffset === -1 || bestCorrelation < selfCorrelation * correlationThreshold) {
-    return null;
+
+  // 5. Parabolic interpolation for sub-sample accuracy
+  if (bestOffset > minPeriod && bestOffset < maxPeriod - 1) {
+    // Recalculate neighbors for interpolation
+    const getCorr = (off: number) => {
+      let c = 0;
+      for (let i = 0; i < clipped.length - off; i++) {
+        c += clipped[i] * clipped[i + off];
+      }
+      return c;
+    };
+    const y0 = getCorr(bestOffset - 1);
+    const y1 = getCorr(bestOffset);
+    const y2 = getCorr(bestOffset + 1);
+    const delta = (y0 - y2) / (2 * (y0 - 2 * y1 + y2));
+    bestOffset += delta;
   }
-  
-  // Refine the pitch using parabolic interpolation
-  const frequency = sampleRate / bestOffset;
-  
-  return frequency;
+
+  return sampleRate / bestOffset;
 }
-
-

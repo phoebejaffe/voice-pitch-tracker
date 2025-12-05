@@ -2,9 +2,9 @@ import { useEffect, useState, useRef } from "react";
 import { detectPitch } from "./pitchDetection";
 
 const COLOR_THRESHOLDS = [
-  { maxFreq: 140, color: "#990000", label: "< 150 Hz: Red" },
-  { maxFreq: 165, color: "#994400", label: "150-165 Hz: Orange" },
-  { maxFreq: 180, color: "#333333", label: "165-180 Hz: Grey" },
+  { maxFreq: 130, color: "#990000", label: "< 150 Hz: Red" },
+  { maxFreq: 145, color: "#994400", label: "150-165 Hz: Orange" },
+  { maxFreq: 165, color: "#334433", label: "165-180 Hz: Grey" },
   { maxFreq: Infinity, color: "#446644", label: "High Pitches: Grey-Green" },
   { maxFreq: null, color: "#000000", label: "No pitch detected" },
 ];
@@ -13,9 +13,75 @@ function App() {
   const [frequency, setFrequency] = useState<number | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toneFrequency, setToneFrequency] = useState(165);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const frequencyHistoryRef = useRef<number[]>([]);
+  const toneContextRef = useRef<AudioContext | null>(null);
+  const [isDronePlaying, setIsDronePlaying] = useState(false);
+  const droneOscillatorRef = useRef<OscillatorNode | null>(null);
+  const droneGainRef = useRef<GainNode | null>(null);
+
+  const stopDrone = () => {
+    if (droneOscillatorRef.current) {
+      droneOscillatorRef.current.stop();
+      droneOscillatorRef.current = null;
+    }
+    droneGainRef.current = null;
+    setIsDronePlaying(false);
+  };
+
+  const playTone = () => {
+    // Stop drone if playing
+    if (isDronePlaying) {
+      stopDrone();
+    }
+
+    // Create a new AudioContext for the tone (or reuse)
+    if (!toneContextRef.current || toneContextRef.current.state === "closed") {
+      toneContextRef.current = new AudioContext();
+    }
+    const ctx = toneContextRef.current;
+
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(toneFrequency, ctx.currentTime);
+
+    gainNode.gain.setValueAtTime(0.5, ctx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1);
+
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    oscillator.start(ctx.currentTime);
+    oscillator.stop(ctx.currentTime + 1);
+  };
+
+  const startDrone = () => {
+    if (!toneContextRef.current || toneContextRef.current.state === "closed") {
+      toneContextRef.current = new AudioContext();
+    }
+    const ctx = toneContextRef.current;
+
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(toneFrequency, ctx.currentTime);
+    gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
+
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    oscillator.start(ctx.currentTime);
+
+    droneOscillatorRef.current = oscillator;
+    droneGainRef.current = gainNode;
+    setIsDronePlaying(true);
+  };
 
   const getBackgroundColor = (freq: number | null): string | undefined => {
     if (freq === null) {
@@ -73,9 +139,27 @@ function App() {
       analyserRef.current.getFloatTimeDomainData(buffer);
 
       const sampleRate = audioContextRef.current.sampleRate;
-      const detectedFreq = detectPitch(buffer, sampleRate, 85, 800);
+      const detectedFreq =
+        detectPitch(buffer, sampleRate, 105, 400) ??
+        detectPitch(buffer, sampleRate, 105, 800);
 
-      setFrequency(detectedFreq);
+      // Track frequency detections with timestamps
+      const now = Date.now();
+      const twoSecondsAgo = now - 2000;
+
+      // Filter out detections older than 5 seconds
+      frequencyHistoryRef.current = frequencyHistoryRef.current.filter(
+        (timestamp) => timestamp > twoSecondsAgo
+      );
+
+      // Add current detection if frequency was found
+      if (detectedFreq !== null) {
+        frequencyHistoryRef.current.push(now);
+      }
+
+      // Only show frequency if we have 10+ detections in the last time period
+      const hasEnoughDetections = frequencyHistoryRef.current.length >= 4;
+      setFrequency(hasEnoughDetections ? detectedFreq : null);
 
       animationFrameRef.current = requestAnimationFrame(analyze);
     };
@@ -94,6 +178,7 @@ function App() {
     }
 
     analyserRef.current = null;
+    frequencyHistoryRef.current = [];
     setIsListening(false);
     setFrequency(null);
   };
@@ -103,6 +188,18 @@ function App() {
       stopListening();
     };
   }, []);
+
+  // Spacebar listener for playing tone
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Space" && e.target === document.body) {
+        e.preventDefault();
+        playTone();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toneFrequency]);
 
   const backgroundColor = getBackgroundColor(frequency);
 
@@ -117,7 +214,7 @@ function App() {
         transition:
           frequency === null
             ? "background-color 1s 2s ease" // hold color during silences
-            : frequency && frequency > 180
+            : frequency && frequency > 170
             ? "background-color 0.2s 0.2s ease" // smooth transition when pitch isn't super low
             : "none", // fast transition when pitch is super low for faster feedback
         display: "flex",
@@ -169,9 +266,9 @@ function App() {
               style={{
                 padding: "1rem 2rem",
                 fontSize: "1.2rem",
-                backgroundColor: "#f44336",
+                backgroundColor: "rgba(0,0,0,0.5)",
                 color: "white",
-                border: "none",
+                border: "2px solid rgba(75,75,75,0.5)",
                 borderRadius: "8px",
                 cursor: "pointer",
               }}
@@ -179,6 +276,59 @@ function App() {
               Stop Listening
             </button>
           )}
+        </div>
+
+        <div
+          style={{
+            marginBottom: "2rem",
+            padding: "1rem",
+            backgroundColor: "rgba(0,0,0,0.3)",
+            borderRadius: "8px",
+          }}
+        >
+          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+            <button
+              onClick={playTone}
+              style={{
+                padding: "0.75rem 1.5rem",
+                fontSize: "1rem",
+                backgroundColor: "#2196F3",
+                color: "white",
+                border: "none",
+                borderRadius: "8px",
+                cursor: "pointer",
+              }}
+            >
+              Tone (Space)
+            </button>
+            <button
+              onClick={isDronePlaying ? stopDrone : startDrone}
+              style={{
+                padding: "0.75rem 1.5rem",
+                fontSize: "1rem",
+                backgroundColor: isDronePlaying ? "#f44336" : "#9C27B0",
+                color: "white",
+                border: "none",
+                borderRadius: "8px",
+                cursor: "pointer",
+              }}
+            >
+              {isDronePlaying ? "Stop" : "Drone"}
+            </button>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+            <label htmlFor="toneFreq">Tone: {toneFrequency} Hz</label>
+            <input
+              id="toneFreq"
+              type="range"
+              min={165}
+              max={205}
+              step={10}
+              value={toneFrequency}
+              onChange={(e) => setToneFrequency(Number(e.target.value))}
+              style={{ width: "150px" }}
+            />
+          </div>
         </div>
 
         {isListening && (
