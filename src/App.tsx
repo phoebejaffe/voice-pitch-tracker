@@ -2,12 +2,165 @@ import { useEffect, useState, useRef } from "react";
 import { detectPitch } from "./pitchDetection";
 
 const COLOR_THRESHOLDS = [
-  { maxFreq: 130, color: "#990000", label: "< 150 Hz: Red" },
-  { maxFreq: 145, color: "#994400", label: "150-165 Hz: Orange" },
-  { maxFreq: 165, color: "#334433", label: "165-180 Hz: Grey" },
-  { maxFreq: Infinity, color: "#446644", label: "High Pitches: Grey-Green" },
+  { maxFreq: 130, color: "#990000", label: "< 130 Hz: Red" },
+  { maxFreq: 145, color: "#994400", label: "130-145 Hz: Orange" },
+  { maxFreq: 165, color: "#334433", label: "145-165 Hz: Grey" },
+  { maxFreq: Infinity, color: "#446644", label: "165+ Hz: Grey-Green" },
   { maxFreq: null, color: "#000000", label: "No pitch detected" },
 ];
+
+// Linear interpolation between two hex colors
+function lerpColor(color1: string, color2: string, t: number): string {
+  const c1 = parseInt(color1.slice(1), 16);
+  const c2 = parseInt(color2.slice(1), 16);
+
+  const r1 = (c1 >> 16) & 0xff,
+    g1 = (c1 >> 8) & 0xff,
+    b1 = c1 & 0xff;
+  const r2 = (c2 >> 16) & 0xff,
+    g2 = (c2 >> 8) & 0xff,
+    b2 = c2 & 0xff;
+
+  const r = Math.round(r1 + (r2 - r1) * t);
+  const g = Math.round(g1 + (g2 - g1) * t);
+  const b = Math.round(b1 + (b2 - b1) * t);
+
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
+}
+
+// Frequency range for the visual indicator
+const FREQ_MIN = 100;
+const FREQ_MAX = 200;
+
+function PitchIndicator({ frequency }: { frequency: number | null }) {
+  const height = 400;
+  const width = 40;
+
+  const [lastY, setLastY] = useState<number | null>(null);
+  const [opacity, setOpacity] = useState(1);
+  const fadeTimeoutRef = useRef<number | null>(null);
+
+  // Calculate position for a given frequency (inverted: low freq at bottom)
+  const freqToY = (freq: number) => {
+    const normalized = (freq - FREQ_MIN) / (FREQ_MAX - FREQ_MIN);
+    return height - normalized * height;
+  };
+
+  // Handle pitch changes and fade logic
+  useEffect(() => {
+    if (frequency !== null) {
+      // Pitch detected - update position, show immediately
+      setLastY(freqToY(Math.min(Math.max(frequency, FREQ_MIN), FREQ_MAX)));
+      setOpacity(1);
+      if (fadeTimeoutRef.current) {
+        clearTimeout(fadeTimeoutRef.current);
+        fadeTimeoutRef.current = null;
+      }
+    } else if (lastY !== null && opacity === 1) {
+      // Pitch lost - wait 0.3s then start fade
+      fadeTimeoutRef.current = window.setTimeout(() => {
+        setOpacity(0);
+      }, 300);
+    }
+    return () => {
+      if (fadeTimeoutRef.current) clearTimeout(fadeTimeoutRef.current);
+    };
+  }, [frequency]);
+
+  // Build color segments
+  const segments: { y: number; height: number; color: string }[] = [];
+  const colorThresholds = COLOR_THRESHOLDS.filter((t) => t.maxFreq !== null);
+
+  let prevFreq = FREQ_MIN;
+  for (const threshold of colorThresholds) {
+    const maxFreq =
+      threshold.maxFreq === Infinity ? FREQ_MAX : (threshold.maxFreq as number);
+    if (prevFreq >= FREQ_MAX) break;
+
+    const segStart = Math.max(prevFreq, FREQ_MIN);
+    const segEnd = Math.min(maxFreq, FREQ_MAX);
+
+    if (segEnd > segStart) {
+      const y1 = freqToY(segEnd);
+      const y2 = freqToY(segStart);
+      segments.push({
+        y: y1,
+        height: y2 - y1,
+        color: threshold.color,
+      });
+    }
+    prevFreq = maxFreq;
+  }
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        width,
+        height,
+        borderRadius: 8,
+        overflow: "hidden",
+        border: "2px solid rgba(255,255,255,0.3)",
+      }}
+    >
+      {/* Color segments */}
+      {segments.map((seg, i) => (
+        <div
+          key={i}
+          style={{
+            position: "absolute",
+            left: 0,
+            top: seg.y,
+            width: "100%",
+            height: seg.height,
+            backgroundColor: seg.color,
+          }}
+        />
+      ))}
+
+      {/* Pitch indicator line */}
+      {lastY !== null && (
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            top: lastY - 2,
+            width: "100%",
+            height: 4,
+            backgroundColor: "white",
+            boxShadow: "0 0 8px rgba(255,255,255,0.8)",
+            opacity,
+            transition: opacity === 0 ? "opacity 0.3s ease" : "none",
+          }}
+        />
+      )}
+
+      {/* Frequency labels */}
+      <span
+        style={{
+          position: "absolute",
+          top: 4,
+          left: 4,
+          fontSize: 12,
+          opacity: 0.7,
+        }}
+      >
+        {FREQ_MAX}
+      </span>
+      <span
+        style={{
+          position: "absolute",
+          bottom: 4,
+          left: 4,
+          fontSize: 12,
+          opacity: 0.7,
+        }}
+      >
+        {FREQ_MIN}
+      </span>
+    </div>
+  );
+}
 
 function App() {
   const [frequency, setFrequency] = useState<number | null>(null);
@@ -83,19 +236,44 @@ function App() {
     setIsDronePlaying(true);
   };
 
-  const getBackgroundColor = (freq: number | null): string | undefined => {
+  const getBackgroundColor = (freq: number | null): string => {
     if (freq === null) {
-      return COLOR_THRESHOLDS.find((threshold) => threshold.maxFreq === null)
-        ?.color;
+      return (
+        COLOR_THRESHOLDS.find((t) => t.maxFreq === null)?.color ?? "#000000"
+      );
     }
-    for (const threshold of COLOR_THRESHOLDS) {
-      if (threshold.maxFreq && freq < threshold.maxFreq) {
+
+    const BLEND_RANGE = 5; // Hz range for smooth transition
+    const thresholds = COLOR_THRESHOLDS.filter(
+      (t) => t.maxFreq !== null && t.maxFreq !== Infinity
+    );
+
+    for (let i = 0; i < thresholds.length; i++) {
+      const threshold = thresholds[i];
+      const thresholdFreq = threshold.maxFreq as number;
+      const nextColor =
+        thresholds[i + 1]?.color ??
+        COLOR_THRESHOLDS.find((t) => t.maxFreq === Infinity)?.color ??
+        "#446644";
+
+      // Within blend range of this threshold
+      if (
+        freq >= thresholdFreq - BLEND_RANGE &&
+        freq < thresholdFreq + BLEND_RANGE
+      ) {
+        const t = (freq - (thresholdFreq - BLEND_RANGE)) / (BLEND_RANGE * 2);
+        return lerpColor(threshold.color, nextColor, t);
+      }
+
+      // Below this threshold (not in blend range)
+      if (freq < thresholdFreq - BLEND_RANGE) {
         return threshold.color;
       }
     }
 
-    return COLOR_THRESHOLDS.find((threshold) => threshold.maxFreq === Infinity)
-      ?.color;
+    return (
+      COLOR_THRESHOLDS.find((t) => t.maxFreq === Infinity)?.color ?? "#446644"
+    );
   };
 
   const startListening = async () => {
@@ -211,12 +389,7 @@ function App() {
         margin: 0,
         padding: 0,
         backgroundColor,
-        transition:
-          frequency === null
-            ? "background-color 1s 2s ease" // hold color during silences
-            : frequency && frequency > 170
-            ? "background-color 0.2s 0.2s ease" // smooth transition when pitch isn't super low
-            : "none", // fast transition when pitch is super low for faster feedback
+        transition: "background-color 0.1s ease",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -332,21 +505,28 @@ function App() {
         </div>
 
         {isListening && (
-          <div>
-            <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>
-              {frequency !== null ? (
-                <>
-                  <strong>{frequency.toFixed(1)} Hz</strong>
-                </>
-              ) : (
-                <span style={{ opacity: 0.5 }}>Listening...</span>
-              )}
-            </div>
+          <div style={{ display: "flex", gap: "2rem", alignItems: "center" }}>
+            <PitchIndicator frequency={frequency} />
+            <div>
+              <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>
+                {frequency !== null ? (
+                  <>
+                    <strong>{frequency.toFixed(1)} Hz</strong>
+                  </>
+                ) : (
+                  <span style={{ opacity: 0.5 }}>Listening...</span>
+                )}
+              </div>
 
-            <div style={{ fontSize: "1rem", opacity: 0.7 }}>
-              {COLOR_THRESHOLDS.map((threshold, index) => (
-                <p key={index}>{threshold.label}</p>
-              ))}
+              <div
+                style={{ fontSize: "1rem", opacity: 0.7, textAlign: "left" }}
+              >
+                {COLOR_THRESHOLDS.map((threshold, index) => (
+                  <p key={index} style={{ margin: "0.25rem 0" }}>
+                    {threshold.label}
+                  </p>
+                ))}
+              </div>
             </div>
           </div>
         )}
