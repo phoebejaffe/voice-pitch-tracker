@@ -185,6 +185,8 @@ function App() {
   const droneGainRef = useRef<GainNode | null>(null);
   const lastColorRef = useRef<string>("#000000");
   const isMobile = useMemo(() => isMobileDevice(), []);
+  const [keepScreenOn, setKeepScreenOn] = useState(false);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   const stopDrone = () => {
     if (droneOscillatorRef.current) {
@@ -194,6 +196,48 @@ function App() {
     droneGainRef.current = null;
     setIsDronePlaying(false);
   };
+
+  // Wake Lock management
+  useEffect(() => {
+    const acquireWakeLock = async () => {
+      if (!("wakeLock" in navigator)) return;
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+        wakeLockRef.current.addEventListener("release", () => {
+          // Wake lock was released (e.g., tab hidden)
+          // Re-acquire when page becomes visible again
+        });
+      } catch (err) {
+        console.error("Wake Lock error:", err);
+      }
+    };
+
+    const releaseWakeLock = async () => {
+      if (wakeLockRef.current) {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+      }
+    };
+
+    // Re-acquire wake lock when page becomes visible
+    const handleVisibilityChange = () => {
+      if (keepScreenOn && document.visibilityState === "visible") {
+        acquireWakeLock();
+      }
+    };
+
+    if (keepScreenOn) {
+      acquireWakeLock();
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    } else {
+      releaseWakeLock();
+    }
+
+    return () => {
+      releaseWakeLock();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [keepScreenOn]);
 
   const playTone = () => {
     // Stop drone if playing
@@ -555,6 +599,29 @@ function App() {
             />
           </div>
         </div>
+
+        {"wakeLock" in navigator && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              marginTop: "1.5rem",
+              justifyContent: "center",
+            }}
+          >
+            <input
+              id="keepScreenOn"
+              type="checkbox"
+              checked={keepScreenOn}
+              onChange={(e) => setKeepScreenOn(e.target.checked)}
+              style={{ width: "18px", height: "18px", cursor: "pointer" }}
+            />
+            <label htmlFor="keepScreenOn" style={{ cursor: "pointer" }}>
+              Keep screen on
+            </label>
+          </div>
+        )}
       </div>
     </div>
   );
