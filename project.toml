@@ -1,0 +1,25 @@
+name = "voice-floor-tracker"
+description = "Mic-driven pitch detector: background color changes by fundamental frequency"
+icon = "🎚️"
+category = "tools"
+autostart = "on-demand"
+
+[[process]]
+name = "dev"
+type = "service"
+runtime = "shell"
+cmd = "npm run dev -- --host 127.0.0.1 --port 5174"
+port = 5174
+health = "http://127.0.0.1:5174/voice-pitch-tracker/"
+
+[[process]]
+name = "build"
+type = "command"
+runtime = "shell"
+cmd = "npm run build"
+
+[[process]]
+name = "preview"
+type = "command"
+runtime = "shell"
+cmd = "npm run preview"
