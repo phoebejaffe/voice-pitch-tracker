@@ -5,15 +5,23 @@ const BELOW_FLOOR_ALERT_MS = 400;
 const REFERENCE_TONE_DURATION_S = 0.35;
 
 /** Richer reference: fundamental + 2nd, 3rd, 4th harmonics (skips partials above Nyquist). */
-function playReferenceTone(audioContext: AudioContext, frequencyHz: number) {
+function playReferenceTone(
+  audioContext: AudioContext,
+  frequencyHz: number,
+  volume01: number
+) {
+  const vol = Math.min(1, Math.max(0, volume01));
+  if (vol < 0.001) return;
+
   const now = audioContext.currentTime;
   const stopAt = now + REFERENCE_TONE_DURATION_S + 0.05;
   const nyquistSafe = audioContext.sampleRate * 0.45;
+  const peak = 0.22 * vol;
 
   const masterGain = audioContext.createGain();
   masterGain.connect(audioContext.destination);
   masterGain.gain.setValueAtTime(0.0001, now);
-  masterGain.gain.exponentialRampToValueAtTime(0.22, now + 0.02);
+  masterGain.gain.exponentialRampToValueAtTime(peak, now + 0.02);
   masterGain.gain.exponentialRampToValueAtTime(
     0.0001,
     now + REFERENCE_TONE_DURATION_S
@@ -232,6 +240,7 @@ function App() {
   const [toneFrequency, setToneFrequency] = useState(165);
   const [pitchFloorHz, setPitchFloorHz] = useState(165);
   const [alertBelowFloor, setAlertBelowFloor] = useState(false);
+  const [referenceToneVolume, setReferenceToneVolume] = useState(100);
   const [keepScreenOn, setKeepScreenOn] = useState(false);
   const [isDronePlaying, setIsDronePlaying] = useState(false);
 
@@ -247,6 +256,7 @@ function App() {
 
   const pitchFloorRef = useRef(pitchFloorHz);
   const alertBelowFloorRef = useRef(alertBelowFloor);
+  const referenceToneVolumeRef = useRef(referenceToneVolume);
   const belowFloorSinceRef = useRef<number | null>(null);
   const alertArmedRef = useRef(true);
 
@@ -254,6 +264,7 @@ function App() {
 
   pitchFloorRef.current = pitchFloorHz;
   alertBelowFloorRef.current = alertBelowFloor;
+  referenceToneVolumeRef.current = referenceToneVolume;
 
   const stopDrone = useCallback(() => {
     if (droneOscillatorRef.current) {
@@ -436,7 +447,7 @@ function App() {
         if (belowFloorSinceRef.current === null) {
           belowFloorSinceRef.current = t;
         } else if (t - belowFloorSinceRef.current >= BELOW_FLOOR_ALERT_MS) {
-          playReferenceTone(ctx, floor);
+          playReferenceTone(ctx, floor, referenceToneVolumeRef.current / 100);
           alertArmedRef.current = false;
           belowFloorSinceRef.current = null;
         }
@@ -717,6 +728,7 @@ function App() {
                 display: "flex",
                 alignItems: "center",
                 gap: "0.5rem",
+                marginBottom: "0.75rem",
               }}
             >
               <span style={{ whiteSpace: "nowrap" }}>Pitch floor (Hz)</span>
@@ -741,6 +753,30 @@ function App() {
                 }}
               />
             </label>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.75rem",
+                flexWrap: "wrap",
+              }}
+            >
+              <label htmlFor="refToneVol" style={{ whiteSpace: "nowrap" }}>
+                Reference volume: {referenceToneVolume}%
+              </label>
+              <input
+                id="refToneVol"
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={referenceToneVolume}
+                onChange={(e) =>
+                  setReferenceToneVolume(Number(e.target.value))
+                }
+                style={{ flex: "1 1 140px", minWidth: "120px" }}
+              />
+            </div>
           </div>
         </div>
 
