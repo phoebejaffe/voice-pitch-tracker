@@ -4,7 +4,7 @@ import { detectPitch } from "./pitchDetection";
 const BELOW_FLOOR_ALERT_MS = 400;
 const REFERENCE_TONE_DURATION_S = 0.35;
 
-/** Richer reference: fundamental + 2nd, 3rd, 4th harmonics (skips partials above Nyquist). */
+/** Reference tone: fundamentals 1×–6×; each step ×0.9 level; skips partials above Nyquist. */
 function playReferenceTone(
   audioContext: AudioContext,
   frequencyHz: number,
@@ -16,38 +16,40 @@ function playReferenceTone(
   const now = audioContext.currentTime;
   const stopAt = now + REFERENCE_TONE_DURATION_S + 0.05;
   const nyquistSafe = audioContext.sampleRate * 0.45;
-  const peak = 0.22 * vol;
+
+  const stepDown = 0.9;
+  const harmonicMults = [1, 2, 3, 4, 5, 6] as const;
+  const rawWeights = harmonicMults.map((_, i) => stepDown ** i);
+  const weightSum = rawWeights.reduce((a, b) => a + b, 0);
+  /** Sum of partial gains at oscillator output (before master envelope). */
+  const partialDriver = 0.62;
+  const partialLevels = rawWeights.map((w) => (w / weightSum) * partialDriver);
+
+  const masterPeak = 0.58 * vol;
 
   const masterGain = audioContext.createGain();
   masterGain.connect(audioContext.destination);
   masterGain.gain.setValueAtTime(0.0001, now);
-  masterGain.gain.exponentialRampToValueAtTime(peak, now + 0.02);
+  masterGain.gain.exponentialRampToValueAtTime(masterPeak, now + 0.02);
   masterGain.gain.exponentialRampToValueAtTime(
     0.0001,
     now + REFERENCE_TONE_DURATION_S
   );
 
-  const partials: { mult: number; level: number }[] = [
-    { mult: 1, level: 0.16 },
-    { mult: 2, level: 0.11 },
-    { mult: 3, level: 0.08 },
-    { mult: 4, level: 0.06 },
-  ];
-
-  for (const { mult, level } of partials) {
+  harmonicMults.forEach((mult, i) => {
     const f = frequencyHz * mult;
-    if (f >= nyquistSafe) continue;
+    if (f >= nyquistSafe) return;
 
     const osc = audioContext.createOscillator();
     const partialGain = audioContext.createGain();
     osc.type = "sine";
     osc.frequency.value = f;
-    partialGain.gain.value = level;
+    partialGain.gain.value = partialLevels[i]!;
     osc.connect(partialGain);
     partialGain.connect(masterGain);
     osc.start(now);
     osc.stop(stopAt);
-  }
+  });
 }
 
 const isMobileDevice = () =>
