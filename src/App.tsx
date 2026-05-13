@@ -489,16 +489,19 @@ function App() {
   return (
     <div
       style={{
-        width: "100vw",
-        height: "100vh",
+        width: "100%",
+        maxWidth: "100%",
+        minWidth: 0,
+        minHeight: "100dvh",
         margin: 0,
-        padding: 0,
+        padding:
+          "max(1rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(2rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left))",
         backgroundColor,
         transition: "background-color 0.1s ease",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center",
+        justifyContent: "flex-start",
         color: "white",
         fontFamily: "system-ui, -apple-system, sans-serif",
       }}
