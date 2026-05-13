@@ -1,7 +1,7 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { detectPitch } from "./pitchDetection";
 
-const BELOW_FLOOR_ALERT_MS = 200;
+const BELOW_FLOOR_ALERT_MS = 400;
 const REFERENCE_TONE_DURATION_S = 0.35;
 
 function playReferenceTone(audioContext: AudioContext, frequencyHz: number) {
@@ -19,74 +19,349 @@ function playReferenceTone(audioContext: AudioContext, frequencyHz: number) {
   osc.stop(now + REFERENCE_TONE_DURATION_S + 0.05);
 }
 
+const isMobileDevice = () =>
+  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent
+  ) || window.innerWidth < 768;
+
 const COLOR_THRESHOLDS = [
-  { maxFreq: 140, color: "#990000", label: "< 150 Hz: Red" },
-  { maxFreq: 165, color: "#994400", label: "150-165 Hz: Orange" },
-  { maxFreq: 180, color: "#333333", label: "165-180 Hz: Grey" },
-  { maxFreq: Infinity, color: "#446644", label: "High Pitches: Grey-Green" },
+  { maxFreq: 130, color: "#990000", label: "< 130 Hz: Red" },
+  { maxFreq: 145, color: "#994400", label: "130-145 Hz: Orange" },
+  { maxFreq: 165, color: "#334433", label: "145-165 Hz: Dark Green" },
+  { maxFreq: Infinity, color: "#446644", label: "> 165 Hz: Green" },
   { maxFreq: null, color: "#000000", label: "No pitch detected" },
 ];
+
+function lerpColor(color1: string, color2: string, t: number): string {
+  const c1 = parseInt(color1.slice(1), 16);
+  const c2 = parseInt(color2.slice(1), 16);
+
+  const r1 = (c1 >> 16) & 0xff,
+    g1 = (c1 >> 8) & 0xff,
+    b1 = c1 & 0xff;
+  const r2 = (c2 >> 16) & 0xff,
+    g2 = (c2 >> 8) & 0xff,
+    b2 = c2 & 0xff;
+
+  const r = Math.round(r1 + (r2 - r1) * t);
+  const g = Math.round(g1 + (g2 - g1) * t);
+  const b = Math.round(b1 + (b2 - b1) * t);
+
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
+}
+
+const FREQ_MIN = 100;
+const FREQ_MAX = 400;
+
+function PitchIndicator({
+  frequency,
+  pitchFloorHz,
+}: {
+  frequency: number | null;
+  pitchFloorHz: number;
+}) {
+  const height = 400;
+  const width = 40;
+
+  const [lastY, setLastY] = useState<number | null>(null);
+  const [opacity, setOpacity] = useState(1);
+  const fadeTimeoutRef = useRef<number | null>(null);
+
+  const freqToY = (freq: number) => {
+    const logMin = Math.log(FREQ_MIN);
+    const logMax = Math.log(FREQ_MAX);
+    const normalized = (Math.log(freq) - logMin) / (logMax - logMin);
+    return height - normalized * height;
+  };
+
+  useEffect(() => {
+    if (frequency !== null && frequency >= FREQ_MIN && frequency <= FREQ_MAX) {
+      setLastY(freqToY(frequency));
+      setOpacity(1);
+      if (fadeTimeoutRef.current) {
+        clearTimeout(fadeTimeoutRef.current);
+        fadeTimeoutRef.current = null;
+      }
+    } else if (lastY !== null && opacity === 1) {
+      fadeTimeoutRef.current = window.setTimeout(() => {
+        setOpacity(0);
+      }, 300);
+    }
+    return () => {
+      if (fadeTimeoutRef.current) clearTimeout(fadeTimeoutRef.current);
+    };
+  }, [frequency]);
+
+  const segments: { y: number; height: number; color: string }[] = [];
+  const colorThresholds = COLOR_THRESHOLDS.filter((t) => t.maxFreq !== null);
+
+  let prevFreq = FREQ_MIN;
+  for (const threshold of colorThresholds) {
+    const maxFreq =
+      threshold.maxFreq === Infinity ? FREQ_MAX : (threshold.maxFreq as number);
+    if (prevFreq >= FREQ_MAX) break;
+
+    const segStart = Math.max(prevFreq, FREQ_MIN);
+    const segEnd = Math.min(maxFreq, FREQ_MAX);
+
+    if (segEnd > segStart) {
+      const y1 = freqToY(segEnd);
+      const y2 = freqToY(segStart);
+      segments.push({
+        y: y1,
+        height: y2 - y1,
+        color: threshold.color,
+      });
+    }
+    prevFreq = maxFreq;
+  }
+
+  const floorY =
+    pitchFloorHz >= FREQ_MIN && pitchFloorHz <= FREQ_MAX
+      ? freqToY(pitchFloorHz)
+      : null;
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        width,
+        height,
+        borderRadius: 8,
+        overflow: "hidden",
+        border: "2px solid rgba(255,255,255,0.3)",
+      }}
+    >
+      {segments.map((seg, i) => (
+        <div
+          key={i}
+          style={{
+            position: "absolute",
+            left: 0,
+            top: seg.y,
+            width: "100%",
+            height: seg.height,
+            backgroundColor: seg.color,
+          }}
+        />
+      ))}
+
+      {floorY !== null && (
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            top: floorY - 1,
+            width: "100%",
+            height: 2,
+            backgroundColor: "rgba(255,255,255,0.55)",
+            pointerEvents: "none",
+          }}
+        />
+      )}
+
+      {lastY !== null && (
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            top: lastY - 2,
+            width: "100%",
+            height: 4,
+            backgroundColor: "white",
+            boxShadow: "0 0 8px rgba(255,255,255,0.8)",
+            opacity,
+            transition: opacity === 0 ? "opacity 0.3s ease" : "none",
+          }}
+        />
+      )}
+
+      <span
+        style={{
+          position: "absolute",
+          top: 4,
+          left: 4,
+          fontSize: 12,
+          opacity: 0.7,
+        }}
+      >
+        {FREQ_MAX}
+      </span>
+      <span
+        style={{
+          position: "absolute",
+          bottom: 4,
+          left: 4,
+          fontSize: 12,
+          opacity: 0.7,
+        }}
+      >
+        {FREQ_MIN}
+      </span>
+    </div>
+  );
+}
 
 function App() {
   const [frequency, setFrequency] = useState<number | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toneFrequency, setToneFrequency] = useState(165);
   const [pitchFloorHz, setPitchFloorHz] = useState(165);
   const [alertBelowFloor, setAlertBelowFloor] = useState(false);
+  const [keepScreenOn, setKeepScreenOn] = useState(false);
+  const [isDronePlaying, setIsDronePlaying] = useState(false);
+
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const frequencyHistoryRef = useRef<number[]>([]);
+  const toneContextRef = useRef<AudioContext | null>(null);
+  const droneOscillatorRef = useRef<OscillatorNode | null>(null);
+  const droneGainRef = useRef<GainNode | null>(null);
+  const lastColorRef = useRef<string>("#000000");
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+
   const pitchFloorRef = useRef(pitchFloorHz);
   const alertBelowFloorRef = useRef(alertBelowFloor);
   const belowFloorSinceRef = useRef<number | null>(null);
   const alertArmedRef = useRef(true);
 
+  const isMobile = useMemo(() => isMobileDevice(), []);
+
   pitchFloorRef.current = pitchFloorHz;
   alertBelowFloorRef.current = alertBelowFloor;
 
-  const getBackgroundColor = (freq: number | null): string | undefined => {
-    if (freq === null) {
-      return COLOR_THRESHOLDS.find((threshold) => threshold.maxFreq === null)
-        ?.color;
+  const stopDrone = useCallback(() => {
+    if (droneOscillatorRef.current) {
+      droneOscillatorRef.current.stop();
+      droneOscillatorRef.current = null;
     }
-    for (const threshold of COLOR_THRESHOLDS) {
-      if (threshold.maxFreq && freq < threshold.maxFreq) {
+    droneGainRef.current = null;
+    setIsDronePlaying(false);
+  }, []);
+
+  useEffect(() => {
+    const acquireWakeLock = async () => {
+      if (!("wakeLock" in navigator)) return;
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+      } catch (err) {
+        console.error("Wake Lock error:", err);
+      }
+    };
+
+    const releaseWakeLock = async () => {
+      if (wakeLockRef.current) {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (keepScreenOn && document.visibilityState === "visible") {
+        acquireWakeLock();
+      }
+    };
+
+    if (keepScreenOn) {
+      acquireWakeLock();
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    } else {
+      releaseWakeLock();
+    }
+
+    return () => {
+      releaseWakeLock();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [keepScreenOn]);
+
+  const playTone = () => {
+    if (isDronePlaying) {
+      stopDrone();
+    }
+
+    if (!toneContextRef.current || toneContextRef.current.state === "closed") {
+      toneContextRef.current = new AudioContext();
+    }
+    const ctx = toneContextRef.current;
+
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(toneFrequency, ctx.currentTime);
+
+    gainNode.gain.setValueAtTime(0.5, ctx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1);
+
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    oscillator.start(ctx.currentTime);
+    oscillator.stop(ctx.currentTime + 1);
+  };
+
+  const startDrone = () => {
+    if (!toneContextRef.current || toneContextRef.current.state === "closed") {
+      toneContextRef.current = new AudioContext();
+    }
+    const ctx = toneContextRef.current;
+
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(toneFrequency, ctx.currentTime);
+    gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
+
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    oscillator.start(ctx.currentTime);
+
+    droneOscillatorRef.current = oscillator;
+    droneGainRef.current = gainNode;
+    setIsDronePlaying(true);
+  };
+
+  const getBackgroundColor = (freq: number | null): string => {
+    if (freq === null) {
+      return (
+        COLOR_THRESHOLDS.find((t) => t.maxFreq === null)?.color ?? "#000000"
+      );
+    }
+
+    const BLEND_RANGE = 5;
+    const thresholds = COLOR_THRESHOLDS.filter(
+      (t) => t.maxFreq !== null && t.maxFreq !== Infinity
+    );
+
+    for (let i = 0; i < thresholds.length; i++) {
+      const threshold = thresholds[i];
+      const thresholdFreq = threshold.maxFreq as number;
+      const nextColor =
+        thresholds[i + 1]?.color ??
+        COLOR_THRESHOLDS.find((t) => t.maxFreq === Infinity)?.color ??
+        "#446644";
+
+      if (
+        freq >= thresholdFreq - BLEND_RANGE &&
+        freq < thresholdFreq + BLEND_RANGE
+      ) {
+        const t = (freq - (thresholdFreq - BLEND_RANGE)) / (BLEND_RANGE * 2);
+        return lerpColor(threshold.color, nextColor, t);
+      }
+
+      if (freq < thresholdFreq - BLEND_RANGE) {
         return threshold.color;
       }
     }
 
-    return COLOR_THRESHOLDS.find((threshold) => threshold.maxFreq === Infinity)
-      ?.color;
-  };
-
-  const startListening = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-      const audioContext = new AudioContext();
-      const source = audioContext.createMediaStreamSource(stream);
-      const analyser = audioContext.createAnalyser();
-
-      analyser.fftSize = 4096;
-      analyser.smoothingTimeConstant = 0.8;
-
-      source.connect(analyser);
-
-      audioContextRef.current = audioContext;
-      analyserRef.current = analyser;
-
-      setIsListening(true);
-      setError(null);
-
-      // Start analysis loop
-      analyzeAudio();
-    } catch (err) {
-      setError(
-        "Failed to access microphone. Please grant microphone permissions."
-      );
-      console.error("Microphone access error:", err);
-    }
+    return (
+      COLOR_THRESHOLDS.find((t) => t.maxFreq === Infinity)?.color ?? "#446644"
+    );
   };
 
   const analyzeAudio = () => {
@@ -101,26 +376,23 @@ function App() {
       analyserRef.current.getFloatTimeDomainData(buffer);
 
       const sampleRate = audioContextRef.current.sampleRate;
+      const minHz = isMobile ? 105 : 85;
       const detectedFreq =
-        detectPitch(buffer, sampleRate, 85, 400) ??
-        detectPitch(buffer, sampleRate, 85, 800);
+        detectPitch(buffer, sampleRate, minHz, 400) ??
+        detectPitch(buffer, sampleRate, minHz, 800);
 
-      // Track frequency detections with timestamps
       const now = Date.now();
       const twoSecondsAgo = now - 2000;
 
-      // Filter out detections older than 5 seconds
       frequencyHistoryRef.current = frequencyHistoryRef.current.filter(
         (timestamp) => timestamp > twoSecondsAgo
       );
 
-      // Add current detection if frequency was found
       if (detectedFreq !== null) {
         frequencyHistoryRef.current.push(now);
       }
 
-      // Only show frequency if we have 10+ detections in the last time period
-      const hasEnoughDetections = frequencyHistoryRef.current.length >= 4;
+      const hasEnoughDetections = frequencyHistoryRef.current.length >= 2;
       const displayFreq = hasEnoughDetections ? detectedFreq : null;
       setFrequency(displayFreq);
 
@@ -155,9 +427,38 @@ function App() {
     analyze();
   };
 
+  const startListening = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.3;
+
+      source.connect(analyser);
+
+      audioContextRef.current = audioContext;
+      analyserRef.current = analyser;
+
+      setIsListening(true);
+      setError(null);
+
+      analyzeAudio();
+    } catch (err) {
+      setError(
+        "Failed to access microphone. Please grant microphone permissions."
+      );
+      console.error("Microphone access error:", err);
+    }
+  };
+
   const stopListening = useCallback(() => {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
     }
 
     if (audioContextRef.current) {
@@ -169,9 +470,10 @@ function App() {
     frequencyHistoryRef.current = [];
     belowFloorSinceRef.current = null;
     alertArmedRef.current = true;
+    stopDrone();
     setIsListening(false);
     setFrequency(null);
-  }, []);
+  }, [stopDrone]);
 
   useEffect(() => {
     return () => {
@@ -179,7 +481,10 @@ function App() {
     };
   }, [stopListening]);
 
-  const backgroundColor = getBackgroundColor(frequency);
+  if (frequency !== null) {
+    lastColorRef.current = getBackgroundColor(frequency);
+  }
+  const backgroundColor = lastColorRef.current;
 
   return (
     <div
@@ -189,12 +494,7 @@ function App() {
         margin: 0,
         padding: 0,
         backgroundColor,
-        transition:
-          frequency === null
-            ? "background-color 1s 2s ease" // hold color during silences
-            : frequency && frequency > 170
-            ? "background-color 0.2s 0.2s ease" // smooth transition when pitch isn't super low
-            : "none", // fast transition when pitch is super low for faster feedback
+        transition: "background-color 0.1s ease",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -258,76 +558,186 @@ function App() {
 
         <div
           style={{
-            marginBottom: "1.5rem",
-            fontSize: "1rem",
-            textAlign: "left",
-            maxWidth: "22rem",
+            display: "flex",
+            gap: "2rem",
+            alignItems: "center",
+            width: "300px",
             marginLeft: "auto",
             marginRight: "auto",
-            backgroundColor: "rgba(0,0,0,0.25)",
-            padding: "1rem 1.25rem",
-            borderRadius: "8px",
           }}
         >
-          <label
+          <PitchIndicator frequency={frequency} pitchFloorHz={pitchFloorHz} />
+          <div>
+            <div
+              style={{
+                fontSize: "2rem",
+                marginBottom: "1rem",
+                textAlign: "left",
+              }}
+            >
+              {frequency !== null ? (
+                <>
+                  <strong>{Math.round(frequency)} Hz</strong>
+                </>
+              ) : (
+                <span style={{ opacity: 0.5 }}>
+                  {isListening ? "Listening" : "Not Listening"}
+                </span>
+              )}
+            </div>
+
+            <div style={{ fontSize: "1rem", opacity: 0.7, textAlign: "left" }}>
+              {COLOR_THRESHOLDS.map((threshold, index) => (
+                <p key={index} style={{ margin: "0.25rem 0" }}>
+                  {threshold.label}
+                </p>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            marginTop: "2rem",
+            padding: "1rem",
+            backgroundColor: "rgba(0,0,0,0.3)",
+            borderRadius: "8px",
+            width: "300px",
+            marginLeft: "auto",
+            marginRight: "auto",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              gap: "0.5rem",
+              marginBottom: "1rem",
+              justifyContent: "center",
+            }}
+          >
+            <button
+              onClick={playTone}
+              style={{
+                padding: "0.75rem 1.5rem",
+                fontSize: "1rem",
+                backgroundColor: "#2196F3",
+                color: "white",
+                border: "none",
+                borderRadius: "8px",
+                cursor: "pointer",
+              }}
+            >
+              Tone
+            </button>
+            <button
+              onClick={isDronePlaying ? stopDrone : startDrone}
+              style={{
+                padding: "0.75rem 1.5rem",
+                fontSize: "1rem",
+                backgroundColor: isDronePlaying ? "#f44336" : "#9C27B0",
+                color: "white",
+                border: "none",
+                borderRadius: "8px",
+                cursor: "pointer",
+              }}
+            >
+              {isDronePlaying ? "Stop" : "Drone"}
+            </button>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+            <label htmlFor="toneFreq">Tone: {toneFrequency} Hz</label>
+            <input
+              id="toneFreq"
+              type="range"
+              min={155}
+              max={205}
+              step={10}
+              value={toneFrequency}
+              onChange={(e) => setToneFrequency(Number(e.target.value))}
+              style={{ width: "150px" }}
+            />
+          </div>
+
+          <div
+            style={{
+              marginTop: "1rem",
+              paddingTop: "1rem",
+              borderTop: "1px solid rgba(255,255,255,0.15)",
+              textAlign: "left",
+            }}
+          >
+            <label
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "0.5rem",
+                marginBottom: "0.75rem",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={alertBelowFloor}
+                onChange={(e) => setAlertBelowFloor(e.target.checked)}
+                style={{ marginTop: "0.2rem" }}
+              />
+              <span>
+                Reference tone if voice stays below pitch floor for{" "}
+                {(BELOW_FLOOR_ALERT_MS / 1000).toFixed(1)}s (while listening)
+              </span>
+            </label>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+              }}
+            >
+              <span style={{ whiteSpace: "nowrap" }}>Pitch floor (Hz)</span>
+              <input
+                type="number"
+                min={80}
+                max={400}
+                step={1}
+                value={pitchFloorHz}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (!Number.isFinite(v)) return;
+                  setPitchFloorHz(Math.min(400, Math.max(80, Math.round(v))));
+                }}
+                style={{
+                  width: "5rem",
+                  padding: "0.35rem 0.5rem",
+                  borderRadius: "4px",
+                  border: "1px solid rgba(255,255,255,0.35)",
+                  backgroundColor: "rgba(0,0,0,0.35)",
+                  color: "inherit",
+                }}
+              />
+            </label>
+          </div>
+        </div>
+
+        {"wakeLock" in navigator && (
+          <div
             style={{
               display: "flex",
               alignItems: "center",
               gap: "0.5rem",
-              marginBottom: "0.75rem",
-              cursor: "pointer",
+              marginTop: "1.5rem",
+              justifyContent: "center",
             }}
           >
             <input
+              id="keepScreenOn"
               type="checkbox"
-              checked={alertBelowFloor}
-              onChange={(e) => setAlertBelowFloor(e.target.checked)}
+              checked={keepScreenOn}
+              onChange={(e) => setKeepScreenOn(e.target.checked)}
+              style={{ width: "18px", height: "18px", cursor: "pointer" }}
             />
-            Play reference tone when voice stays below pitch floor for{" "}
-            {(BELOW_FLOOR_ALERT_MS / 1000).toFixed(1)}s
-          </label>
-          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            <span style={{ whiteSpace: "nowrap" }}>Pitch floor (Hz)</span>
-            <input
-              type="number"
-              min={80}
-              max={400}
-              step={1}
-              value={pitchFloorHz}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                if (!Number.isFinite(v)) return;
-                setPitchFloorHz(Math.min(400, Math.max(80, Math.round(v))));
-              }}
-              style={{
-                width: "5rem",
-                padding: "0.35rem 0.5rem",
-                borderRadius: "4px",
-                border: "1px solid rgba(255,255,255,0.35)",
-                backgroundColor: "rgba(0,0,0,0.35)",
-                color: "inherit",
-              }}
-            />
-          </label>
-        </div>
-
-        {isListening && (
-          <div>
-            <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>
-              {frequency !== null ? (
-                <>
-                  <strong>{frequency.toFixed(1)} Hz</strong>
-                </>
-              ) : (
-                <span style={{ opacity: 0.5 }}>Listening...</span>
-              )}
-            </div>
-
-            <div style={{ fontSize: "1rem", opacity: 0.7 }}>
-              {COLOR_THRESHOLDS.map((threshold, index) => (
-                <p key={index}>{threshold.label}</p>
-              ))}
-            </div>
+            <label htmlFor="keepScreenOn" style={{ cursor: "pointer" }}>
+              Keep screen on
+            </label>
           </div>
         )}
       </div>
