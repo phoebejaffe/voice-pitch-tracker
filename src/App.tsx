@@ -4,19 +4,42 @@ import { detectPitch } from "./pitchDetection";
 const BELOW_FLOOR_ALERT_MS = 400;
 const REFERENCE_TONE_DURATION_S = 0.35;
 
+/** Richer reference: fundamental + 2nd, 3rd, 4th harmonics (skips partials above Nyquist). */
 function playReferenceTone(audioContext: AudioContext, frequencyHz: number) {
-  const osc = audioContext.createOscillator();
-  const gain = audioContext.createGain();
-  osc.type = "sine";
-  osc.frequency.value = frequencyHz;
   const now = audioContext.currentTime;
-  gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.exponentialRampToValueAtTime(0.2, now + 0.02);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + REFERENCE_TONE_DURATION_S);
-  osc.connect(gain);
-  gain.connect(audioContext.destination);
-  osc.start(now);
-  osc.stop(now + REFERENCE_TONE_DURATION_S + 0.05);
+  const stopAt = now + REFERENCE_TONE_DURATION_S + 0.05;
+  const nyquistSafe = audioContext.sampleRate * 0.45;
+
+  const masterGain = audioContext.createGain();
+  masterGain.connect(audioContext.destination);
+  masterGain.gain.setValueAtTime(0.0001, now);
+  masterGain.gain.exponentialRampToValueAtTime(0.22, now + 0.02);
+  masterGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    now + REFERENCE_TONE_DURATION_S
+  );
+
+  const partials: { mult: number; level: number }[] = [
+    { mult: 1, level: 0.16 },
+    { mult: 2, level: 0.11 },
+    { mult: 3, level: 0.08 },
+    { mult: 4, level: 0.06 },
+  ];
+
+  for (const { mult, level } of partials) {
+    const f = frequencyHz * mult;
+    if (f >= nyquistSafe) continue;
+
+    const osc = audioContext.createOscillator();
+    const partialGain = audioContext.createGain();
+    osc.type = "sine";
+    osc.frequency.value = f;
+    partialGain.gain.value = level;
+    osc.connect(partialGain);
+    partialGain.connect(masterGain);
+    osc.start(now);
+    osc.stop(stopAt);
+  }
 }
 
 const isMobileDevice = () =>
